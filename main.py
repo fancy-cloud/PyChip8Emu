@@ -1,5 +1,6 @@
 from memory import Memory
 from cpu import CPU
+from screen import Screen
 import pygame
 import time
 import os
@@ -7,8 +8,8 @@ import os
 def get_rom_data() -> bytes:
 	completed = False
 	while not completed:
-		rom_name = input("Enter a ROM name (WITHOUT EXTENSION): ")
-		path_to_rom = os.getcwd() + '/roms/' + rom_name + '.ch8'
+		rom_name = input("Enter a ROM name: ")
+		path_to_rom = os.getcwd() + '/roms/' + rom_name
 		try:
 			with open(path_to_rom, 'rb') as rom_file:
 				rom_data = rom_file.read()
@@ -18,13 +19,10 @@ def get_rom_data() -> bytes:
 			pass
 
 def main():
-	#pygame.init()
-	#canvas = pygame.display.set_mode(512, 256)
-	#canvas.fill(0x000000)
-	#pygame.display.update()
-
 	rom_data = get_rom_data()
 
+	width, height = 512, 256
+	screen = Screen(width, height)
 	mem = Memory()
 	cpu = CPU(mem)
 	cpu.load_rom(rom_data)
@@ -33,6 +31,7 @@ def main():
 
 	while True:
 		cpu.cycle()
+
 		for event in pygame.event.get():
 			if event.type == pygame.KEYDOWN or event.type == pygame.KEYUP:
 				if event.key in cpu.k_map:
@@ -45,14 +44,14 @@ def main():
 				quit()
 
 		if cpu.update_screen_flag == 1:
+			screen.draw_frame(cpu)
 			pygame.display.update()
-			cpu.update_screen_flag = 0
 
 		cycles += 1
 
 		if cycles == 10:
-			time.sleep(1/1000)
+			time.sleep(10/1000)
 			cycles = 0
-
+			
 if __name__ == '__main__':
 	main()

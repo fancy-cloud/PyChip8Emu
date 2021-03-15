@@ -35,29 +35,29 @@ class CPU:
 		#####################################
 		self.mem = mem
 		self.stack = []
-		self.fontset = [0xF0, 0x90, 0x90, 0x90, 0xF0, 
-                        0x20, 0x60, 0x20, 0x20, 0x70, 
-                        0xF0, 0x10, 0xF0, 0x80, 0xF0, 
-                        0xF0, 0x10, 0xF0, 0x10, 0xF0, 
-                        0x90, 0x90, 0xF0, 0x10, 0x10, 
-                        0xF0, 0x80, 0xF0, 0x10, 0xF0,
-                        0xF0, 0x80, 0xF0, 0x90, 0xF0, 
-                        0xF0, 0x10, 0x20, 0x40, 0x40, 
-                        0xF0, 0x90, 0xF0, 0x90, 0xF0, 
-                        0xF0, 0x90, 0xF0, 0x10, 0xF0, 
-                        0xF0, 0x90, 0xF0, 0x90, 0x90, 
-                        0xE0, 0x90, 0xE0, 0x90, 0xE0, 
-                        0xF0, 0x80, 0x80, 0x80, 0xF0, 
-                        0xE0, 0x90, 0x90, 0x90, 0xE0,
-                        0xF0, 0x80, 0xF0, 0x80, 0xF0, 
-                        0xF0, 0x80, 0xF0, 0x80, 0x80]
-		self.SCREEN_WIDTH = 512
-		self.SCREEN_HEIGHT = 256
-		self.CHIP_SCREEN_WIDTH = 64
-		self.CHIP_SCREEN_HEIGHT = 32
-		self.RESOLUTION_RATIO = 8
+		self.fontset = [
+		0xF0, 0x90, 0x90, 0x90, 0xF0,
+		0x20, 0x60, 0x20, 0x20, 0x70,
+		0xF0, 0x10, 0xF0, 0x80, 0xF0,
+		0xF0, 0x10, 0xF0, 0x10, 0xF0,
+		0x90, 0x90, 0xF0, 0x10, 0x10,
+		0xF0, 0x80, 0xF0, 0x10, 0xF0,
+		0xF0, 0x80, 0xF0, 0x90, 0xF0,
+		0xF0, 0x10, 0x20, 0x40, 0x40,
+		0xF0, 0x90, 0xF0, 0x90, 0xF0,
+		0xF0, 0x90, 0xF0, 0x10, 0xF0,
+		0xF0, 0x90, 0xF0, 0x90, 0x90,
+		0xE0, 0x90, 0xE0, 0x90, 0xE0,
+		0xF0, 0x80, 0x80, 0x80, 0xF0,
+		0xE0, 0x90, 0x90, 0x90, 0xE0,
+		0xF0, 0x80, 0xF0, 0x80, 0xF0,
+		0xF0, 0x80, 0xF0, 0x80, 0x80
+		]
+		self.FONTSET_SIZE = 80
+		self.SCREEN_WIDTH = 64
+		self.SCREEN_HEIGHT = 32
 		self.update_screen_flag = 0
-		self.screen = pygame.PixelArray(pygame.display.set_mode((self.SCREEN_WIDTH, self.SCREEN_HEIGHT)))
+		self.screen_mem = [0] * self.SCREEN_WIDTH * self.SCREEN_HEIGHT
 
 		#####################################
 		#               Sound               #
@@ -89,7 +89,7 @@ class CPU:
 		self.keys_pressed = [0] * 16
 
 	def load_rom(self, rom: bytes):
-		for i in range(80):
+		for i in range(self.FONTSET_SIZE):
 			self.mem[i] = self.fontset[i]
 		start_address = 0x200
 		i = 0
@@ -106,7 +106,6 @@ class CPU:
 		if self.cycle_end_time - self.cycle_start_time >= 1/60:
 			self.decrement_clocks()
 			self.cycle_start_time = self.cycle_end_time
-
 
 	def decrement_clocks(self):
 		if self.delay > 0:
@@ -215,9 +214,8 @@ class CPU:
 	#           Instructions            #
 	#####################################
 	def ins_cls(self):
-		for y in range(0, self.SCREEN_HEIGHT):
-			for x in range(0, self.SCREEN_WIDTH):
-				self.screen[x][y] = 0x000000
+		for screen_pos in range(self.SCREEN_HEIGHT * self.SCREEN_WIDTH):
+			self.screen_mem[screen_pos] = 0x000000
 		self.update_screen_flag = 1
 
 	def ins_ret(self):
@@ -315,18 +313,19 @@ class CPU:
 	def ins_drw(self, vx: int, vy: int, n: int):
 		self.V[0xF] = 0
 		bits = 8
-		for y in range(0, n):
-			currY = (self.V[vy] + y) % self.CHIP_SCREEN_HEIGHT * self.RESOLUTION_RATIO
+		for y in range(n):
 			data = self.mem[self.I + y]
-			for x in range(0, bits):
-				if data & (0x80 >> x) != 0:
-					currX = (self.V[vx] + x) % self.CHIP_SCREEN_WIDTH * self.RESOLUTION_RATIO
-					if self.screen[currX][currY] == 0xFFFFFF:
+			for x in range(bits):
+				currX = self.V[vx] + x
+				currY = self.V[vy] + y
+				data_byte = (data >> (7-x)) & 0x1
+				if currX < self.SCREEN_WIDTH and currY < self.SCREEN_HEIGHT:
+					screen_pos = self.SCREEN_WIDTH * currY + currX
+					if self.screen_mem[screen_pos] & data_byte == 1:
 						self.V[0xF] = 1
-					for y_offset in range(0, self.RESOLUTION_RATIO):
-						for x_offset in range(0,self.RESOLUTION_RATIO):
-							self.screen[currX+x_offset][currY+y_offset] ^= 0xFFFFFF
-			self.update_screen_flag = 1
+					self.screen_mem[screen_pos] ^= data_byte
+		self.update_screen_flag = 1
+		
 
 	def ins_skp(self, vx: int):
 		key_code = self.V[vx]
@@ -368,7 +367,7 @@ class CPU:
 
 	def ins_ld_reg_dump(self, vx: int):
 		for reg_num in range(vx+1):
-			self.mem[self.I + reg_num] = self.V[vx] 
+			self.mem[self.I + reg_num] = self.V[reg_num] 
 		self.I += vx+1
 
 	def ins_ld_reg_load(self, vx: int):
