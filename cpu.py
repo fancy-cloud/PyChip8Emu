@@ -1,6 +1,6 @@
-import numpy as np
 import random
 import pygame
+import time
 from memory import Memory
 
 class CPU:
@@ -10,38 +10,63 @@ class CPU:
 		#           VF: Flag register       #
 		#####################################
 		self._DATA_REGISTERS_AMOUNT = 0x10
-		self.V = np.zeros(self._DATA_REGISTERS_AMOUNT, dtype='uint8')
+		self.V = [0] * self._DATA_REGISTERS_AMOUNT
 
 		#####################################
 		#          Address register         #
 		#####################################
-		self.I  = np.uint16(0x0)
+		self.I  = 0x0
 
 		#####################################
 		# Program Counter and Stack Pointer #
 		#####################################
-		self.PC = np.uint16(0x200)
-		self.SP = np.uint16(0x0)
+		self.PC = 0x200
 
 		#####################################
 		#              Timers               #
 		#####################################
-		self.delay = np.uint8(60)
-		self.sound = np.uint8(60)
+		self.delay = 0x0
+		self.sound = 0x0
+		self.cycle_start_time = 0
+		self.cycle_end_time = 0
 
 		#####################################
 		#         Memory and screen         #
 		#####################################
 		self.mem = mem
-		self.stack = np.zeros(16, dtype='uint16')
-		self._SCREEN_BEGIN_ADDR = 0xFF0
-		self._SCREEN_END_ADDR = 0xFFF
-		self._SCREEN_WIDTH = 64
-		self._SCREEN_HEIGHT = 32
-		self.screen = self.mem[self._SCREEN_BEGIN_ADDR]
+		self.stack = []
+		self.fontset = [0xF0, 0x90, 0x90, 0x90, 0xF0, 
+                        0x20, 0x60, 0x20, 0x20, 0x70, 
+                        0xF0, 0x10, 0xF0, 0x80, 0xF0, 
+                        0xF0, 0x10, 0xF0, 0x10, 0xF0, 
+                        0x90, 0x90, 0xF0, 0x10, 0x10, 
+                        0xF0, 0x80, 0xF0, 0x10, 0xF0,
+                        0xF0, 0x80, 0xF0, 0x90, 0xF0, 
+                        0xF0, 0x10, 0x20, 0x40, 0x40, 
+                        0xF0, 0x90, 0xF0, 0x90, 0xF0, 
+                        0xF0, 0x90, 0xF0, 0x10, 0xF0, 
+                        0xF0, 0x90, 0xF0, 0x90, 0x90, 
+                        0xE0, 0x90, 0xE0, 0x90, 0xE0, 
+                        0xF0, 0x80, 0x80, 0x80, 0xF0, 
+                        0xE0, 0x90, 0x90, 0x90, 0xE0,
+                        0xF0, 0x80, 0xF0, 0x80, 0xF0, 
+                        0xF0, 0x80, 0xF0, 0x80, 0x80]
+		self.SCREEN_WIDTH = 512
+		self.SCREEN_HEIGHT = 256
+		self.CHIP_SCREEN_WIDTH = 64
+		self.CHIP_SCREEN_HEIGHT = 32
+		self.RESOLUTION_RATIO = 8
+		self.update_screen_flag = 0
+		self.screen = pygame.PixelArray(pygame.display.set_mode((self.SCREEN_WIDTH, self.SCREEN_HEIGHT)))
 
 		#####################################
-		#           Keyboard map            #
+		#               Sound               #
+		#####################################
+		pygame.mixer.init()
+		self.BEEP_SOUND = pygame.mixer.Sound('sound/beep.wav')
+
+		#####################################
+		#             Keyboard              #
 		#####################################
 		self.k_map = {
 			pygame.K_x: 0x0,
@@ -61,17 +86,34 @@ class CPU:
 			pygame.K_f: 0xE,
 			pygame.K_v: 0xF
 		}
-
-	def decrement_clocks(self):
-		self.delay = self.delay - 1 if self.delay > 0 else 60
-		self.sound = self.sound - 1 if self.sound > 0 else 60
+		self.keys_pressed = [0] * 16
 
 	def load_rom(self, rom: bytes):
+		for i in range(80):
+			self.mem[i] = self.fontset[i]
 		start_address = 0x200
 		i = 0
 		for byte in rom:
 			self.mem[start_address+i] = byte
 			i += 1
+
+	def cycle(self):
+		ins = self.fetch_instruction()
+		self.execute_instruction(ins)
+
+		self.cycle_end_time = time.time()
+
+		if self.cycle_end_time - self.cycle_start_time >= 1/60:
+			self.decrement_clocks()
+			self.cycle_start_time = self.cycle_end_time
+
+
+	def decrement_clocks(self):
+		if self.delay > 0:
+			self.delay -= 1
+		if self.sound > 0:
+			self.BEEP_SOUND.play()
+			self.sound -= 1
 
 	def fetch_instruction(self):
 		ins = self.mem[self.PC]
@@ -80,8 +122,10 @@ class CPU:
 		self.PC += 2
 		return ins
 
-	def execute_instruction(self, ins: np.uint16):
+	def execute_instruction(self, ins: int):
 		ins_type = ins & 0xF000
+		vx = (ins & 0x0F00) >> 8
+		vy = (ins & 0x00F0) >> 4
 		if ins == 0x00E0:
 			self.ins_cls()
 		elif ins == 0x00EE:
@@ -93,29 +137,21 @@ class CPU:
 			addr = ins & 0x0FFF
 			self.ins_call(addr)
 		elif ins_type == 0x3000:
-			vx = (ins & 0x0F00) >> 8
 			value = ins & 0x00FF
 			self.ins_se(vx, value)
 		elif ins_type == 0x4000:
-			vx = (ins & 0x0F00) >> 8
 			value = ins & 0x00FF
 			self.ins_sne(vx, value)
 		elif ins_type == 0x5000:
-			vx = (ins & 0x0F00) >> 8
-			vy = (ins & 0x00F0) >> 4
 			self.ins_se_reg(vx, vy)
 		elif ins_type == 0x6000:
-			vx = (ins & 0x0F00) >> 8
 			value = ins & 0x00FF
 			self.ins_ld(vx, value)
 		elif ins_type == 0x7000:
-			vx = (ins & 0x0F00) >> 8
 			value = ins & 0x00FF
 			self.ins_add(vx, value)
 		elif ins_type == 0x8000:
 			ins_subtype = ins & 0x000F
-			vx = (ins & 0x0F00) >> 8
-			vy = (ins & 0x00F0) >> 4
 			if ins_subtype == 0x0:
 				self.ins_ld_reg(vx, vy)
 			elif ins_subtype == 0x1:
@@ -132,11 +168,9 @@ class CPU:
 				self.ins_shr(vx, vy)
 			elif ins_subtype == 0x7:
 				self.ins_subn_carry(vx, vy)
-			elif ins_subtype == 0x8:
+			elif ins_subtype == 0xE:
 				self.ins_shl(vx, vy)
 		elif ins_type == 0x9000:
-			vx = (ins & 0x0F00) >> 8
-			vy = (ins & 0x00F0) >> 4
 			self.ins_sne_reg(vx, vy)
 		elif ins_type == 0xA000:
 			addr = ins & 0x0FFF
@@ -145,24 +179,19 @@ class CPU:
 			addr = ins & 0x0FFF
 			self.ins_jp_addr(addr)
 		elif ins_type == 0xC000:
-			vx = (ins & 0x0F00) >> 8
 			value = ins & 0x00FF
 			self.ins_rnd(vx, value)
 		elif ins_type == 0xD000:
-			vx = (ins & 0x0F00) >> 8
-			vy = (ins & 0x00F0) >> 4
 			n = ins & 0x000F
-			self.drw(vx, vy, n)
+			self.ins_drw(vx, vy, n)
 		elif ins_type == 0xE000:
 			ins_subtype = ins & 0x00FF
-			vx = (ins & 0x0F00) >> 8
-			if ins_subtype == 0x00A1:
-				self.ins_sknp(vx)
-			elif ins_subtype == 0x009E:
+			if ins_subtype == 0x009E:
 				self.ins_skp(vx)
+			elif ins_subtype == 0x00A1:
+				self.ins_sknp(vx)
 		elif ins_type == 0xF000:
 			ins_subtype = ins & 0x00FF
-			vx = (ins & 0x0F00) >> 8
 			if ins_subtype == 0x0007:
 				self.ins_ld_delay(vx)
 			if ins_subtype == 0x000A:
@@ -186,156 +215,164 @@ class CPU:
 	#           Instructions            #
 	#####################################
 	def ins_cls(self):
-		for addr in range(self._SCREEN_BEGIN_ADDR, self._SCREEN_END_ADDR+1):
-			self.mem[addr] = 0x0
+		for y in range(0, self.SCREEN_HEIGHT):
+			for x in range(0, self.SCREEN_WIDTH):
+				self.screen[x][y] = 0x000000
+		self.update_screen_flag = 1
 
 	def ins_ret(self):
-		self.SP -= 1
-		self.PC = self.stack[self.SP]
+		self.PC = self.stack.pop()
 
-	def ins_jp(self, addr: np.uint16):
+	def ins_jp(self, addr: int):
 		self.PC = addr
 
-	def ins_call(self, addr: np.uint16):
-		self.stack[self.SP] = self.PC
-		self.SP += 1
+	def ins_call(self, addr: int):
+		self.stack.append(self.PC)
 		self.PC = addr
 
-	def ins_se(self, vx: np.uint8, value: np.uint8):
+	def ins_se(self, vx: int, value: int):
 		if self.V[vx] == value:
 			self.PC += 2
 
-	def ins_sne(self, vx: np.uint8, value: np.uint8):
+	def ins_sne(self, vx: int, value: int):
 		if self.V[vx] != value:
 			self.PC += 2
 
-	def ins_se_reg(self, vx: np.uint8, vy: np.uint8):
+	def ins_se_reg(self, vx: int, vy: int):
 		if self.V[vx] == self.V[vy]:
 			self.PC += 2
 
-	def ins_ld(self, vx: np.uint8, value: np.uint8):
+	def ins_ld(self, vx: int, value: int):
 		self.V[vx] = value
 
-	def ins_add(self, vx: np.uint8, value: np.uint8):
+	def ins_add(self, vx: int, value: int):
 		self.V[vx] += value
+		self.V[vx] &= 0xFF
 
-	def ins_ld_reg(self, vx: np.uint8, vy: np.uint8):
+	def ins_ld_reg(self, vx: int, vy: int):
 		self.V[vx] = self.V[vy]
 
-	def ins_or(self, vx: np.uint8, vy: np.uint8):
+	def ins_or(self, vx: int, vy: int):
 		self.V[vx] |= self.V[vy]
 
-	def ins_and(self, vx: np.uint8, vy: np.uint8):
+	def ins_and(self, vx: int, vy: int):
 		self.V[vx] &= self.V[vy]
 
-	def ins_xor(self, vx: np.uint8, vy: np.uint8):
+	def ins_xor(self, vx: int, vy: int):
 		self.V[vx] ^= self.V[vy]
 
-	def ins_add_carry(self, vx: np.uint8, vy: np.uint8):
-		if 0x100 - self.V[vx] < self.V[vy]:
-			self.V[vx] = self.V[vy] - (0x100 - self.V[vx])
-			self.V[0xF] = 0x1
-		else:
-			self.V[vx] += self.V[vy]
-			self.V[0xF] = 0x0
+	def ins_add_carry(self, vx: int, vy: int):
+		self.V[vx] += self.V[vy]
+		self.V[0xF] = 1 if self.V[vx] > 0xFF else 0
+		self.V[vx] &= 0xFF
 
-	def ins_sub_carry(self, vx: np.uint8, vy: np.uint8):
+	def ins_sub_carry(self, vx: int, vy: int):
 		if self.V[vx] < self.V[vy]:
-			self.V[vx] = 0x100 - (self.V[vy] - self.V[vx])
-			self.V[0xF] = 0x1
-		else:
-			self.V[vx] -= self.V[vy]
 			self.V[0xF] = 0x0
+		else:
+			self.V[0xF] = 0x1
+		self.V[vx] -= self.V[vy]
+		self.V[vx] &= 0xFF
 
-	def ins_shr(self, vx: np.uint8):
-		self.V[0xF] = 0x1 if self.V[vx] & 0x1 == 0x1 else 0x0
-		self.V[vx] >>= 1
+	def ins_shr(self, vx: int, vy: int):
+		if self.V[vy] == 1:
+			self.V[0xF] = self.V[vy] & 0x1
+			self.V[vx] = self.V[vy] >> 1
+		else:
+			self.V[0xF] = self.V[vx] & 0x1
+			self.V[vx] = self.V[vx] >> 1
 
-	def ins_subn_carry(self, vx: np.uint8, vy: np.uint8):
+	def ins_subn_carry(self, vx: int, vy: int):
 		if self.V[vy] < self.V[vx]:
-			self.V[vx] = 0x100 - (self.V[vx] - self.V[vy])
-			self.V[0xF] = 0x1
-		else:
-			self.V[vx] = self.V[vy] - self.V[vx]
 			self.V[0xF] = 0x0
+		else:
+			self.V[0xF] = 0x1
+		self.V[vx] = self.V[vy] - self.V[vx]
+		self.V[vx] &= 0xFF
 
-	def ins_shl(self, vx: np.uint8):
-		self.V[0xF] = 0x1 if self.V[vx] & 0x7F == 0x7F else 0x0
-		self.V[vx] <<= 1
+	def ins_shl(self, vx: int, vy: int):
+		if self.V[vy] == 1:
+			self.V[0xF] = self.V[vy] & 0x80
+			self.V[vx] = self.V[vy] << 1
+		else:
+			self.V[0xF] = self.V[vx] & 0x80
+			self.V[vx] = self.V[vx] << 1
+		self.V[vx] &= 0xFF
 
-	def ins_sne_reg(self, vx: np.uint8, vy: np.uint8):
+	def ins_sne_reg(self, vx: int, vy: int):
 		if self.V[vx] != self.V[vy]:
 			self.PC += 2
 
-	def ins_ld_addr(self, addr: np.uint16):
+	def ins_ld_addr(self, addr: int):
 		self.I = addr
 
-	def ins_jp_addr(self, addr: np.uint16):
+	def ins_jp_addr(self, addr: int):
 		self.PC = addr + self.V[0x0]
 
-	def ins_rnd(self, vx: np.uint8, value: np.uint8):
+	def ins_rnd(self, vx: int, value: int):
 		self.V[vx] = random.randint(0x0, 0xFF) & value
 
-	def ins_drw(self, vx: np.uint8, vy: np.uint8, n: np.uint8):
+	def ins_drw(self, vx: int, vy: int, n: int):
+		self.V[0xF] = 0
 		bits = 8
 		for y in range(0, n):
-			currY = (self.V[vy] + y) % self._SCREEN_HEIGHT
+			currY = (self.V[vy] + y) % self.CHIP_SCREEN_HEIGHT * self.RESOLUTION_RATIO
 			data = self.mem[self.I + y]
 			for x in range(0, bits):
 				if data & (0x80 >> x) != 0:
-					currX = (self.V[vx] + x) % self._SCREEN_WIDTH
-					if self.mem[bits*y + x] == 1:
+					currX = (self.V[vx] + x) % self.CHIP_SCREEN_WIDTH * self.RESOLUTION_RATIO
+					if self.screen[currX][currY] == 0xFFFFFF:
 						self.V[0xF] = 1
-					self.mem[bits*y + x] ^= 1
+					for y_offset in range(0, self.RESOLUTION_RATIO):
+						for x_offset in range(0,self.RESOLUTION_RATIO):
+							self.screen[currX+x_offset][currY+y_offset] ^= 0xFFFFFF
+			self.update_screen_flag = 1
 
-	def ins_skp(self, vx: np.uint8):
-		keys_pressed = pygame.key.get_pressed()
-		for real_key, chip_key in self.k_map.items():
-			if chip_key == self.V[vx] and keys_pressed[real_key]:
-				self.PC += 2
-				break
+	def ins_skp(self, vx: int):
+		key_code = self.V[vx]
+		if self.keys_pressed[key_code] == 1:
+			self.PC += 2
 
-	def ins_sknp(self, vx: np.uint8):
-		keys_pressed = pygame.key.get_pressed()
-		for real_key, chip_key in self.k_map.items():
-			if chip_key == self.V[vx] and not keys_pressed[real_key]:
-				self.PC += 2
-				break
-
-	def ins_ld_delay(self, vx: np.uint8):
+	def ins_sknp(self, vx: int):
+		key_code = self.V[vx]
+		if self.keys_pressed[key_code] == 0:
+			self.PC += 2
+		
+	def ins_ld_delay(self, vx: int):
 		self.V[vx] = self.delay
 
-	def ins_ld_key(self, vx: np.uint8):
-		key_pressed = False
-		while not key_pressed:
-			keys_pressed = pygame.key.get_pressed()
-			for real_key, chip_key in self.k_map.items():
-				if keys_pressed[real_key]:
-					self.V[vx] = chip_key
-					key_pressed = True
-					break
+	def ins_ld_key(self, vx: int):
+		self.PC -= 2
+		for key_code, pressed in enumerate(self.keys_pressed):
+			if pressed == 1:
+				self.V[vx] = key_code
+				self.PC += 2
+				break
 
-	def ins_ld_delay_to_reg(self, vx: np.uint8):
+	def ins_ld_delay_to_reg(self, vx: int):
 		self.delay = self.V[vx]
 
-	def ins_ld_sound(self, vx: np.uint8):
+	def ins_ld_sound(self, vx: int):
 		self.sound = self.V[vx]
 
-	def ins_add_addr(self, vx: np.uint8):
+	def ins_add_addr(self, vx: int):
 		self.I += self.V[vx]
 
-	def ins_ld_sprite_loc(self, vx: np.uint8):
-		self.I = self.V[vx]
+	def ins_ld_sprite_loc(self, vx: int):
+		self.I = self.V[vx] * 5
 
-	def ins_ld_bcd(self, vx: np.uint8):
-		self.mem[self.I] = self.V[vx] / 0x64
-		self.mem[self.I + 1] = (self.V[vx] / 0xA) % 0xA
-		self.mem[self.I + 2] = self.V[vx] % 0xA
+	def ins_ld_bcd(self, vx: int):
+		self.mem[self.I] = self.V[vx] // 100
+		self.mem[self.I + 1] = (self.V[vx] % 100) // 10
+		self.mem[self.I + 2] = (self.V[vx] % 100) % 10
 
-	def ins_ld_reg_dump(self, vx: np.uint8):
-		for reg_num in range(0x0, vx+1):
+	def ins_ld_reg_dump(self, vx: int):
+		for reg_num in range(vx+1):
 			self.mem[self.I + reg_num] = self.V[vx] 
+		self.I += vx+1
 
-	def ins_ld_reg_load(self, vx: np.uint8):
-		for reg_num in range(0x0, vx+1):
+	def ins_ld_reg_load(self, vx: int):
+		for reg_num in range(vx+1):
 			self.V[reg_num] = self.mem[self.I + reg_num]
+			self.V[reg_num] &= 0xFF
+		self.I += vx+1

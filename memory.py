@@ -1,12 +1,10 @@
-import numpy as np
-
 class Memory:
 	def __init__(self):
 		self._MAX_MEM = 0x1000
-		self.mem = np.zeros(self._MAX_MEM, dtype='uint8')
+		self.mem =[0] * self._MAX_MEM
 
-	def __setitem__(self, addr: np.uint16, value: np.uint8):
+	def __setitem__(self, addr: int, value: int):
 		self.mem[addr] = value
 
-	def __getitem__(self, addr: np.uint16):
+	def __getitem__(self, addr: int):
 		return self.mem[addr]
